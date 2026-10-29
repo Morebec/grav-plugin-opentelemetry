@@ -4,29 +4,37 @@ namespace Grav\Plugin;
 
 use Grav\Common\Grav;
 use Grav\Common\Plugin;
+use Grav\Common\Scheduler\Job;
+use Grav\Common\Scheduler\Scheduler;
 use Grav\Plugin\OpenTelemetry\Clock;
 use Grav\Plugin\OpenTelemetry\Exporter;
 use Grav\Plugin\OpenTelemetry\OtlpJson;
 use Grav\Plugin\OpenTelemetry\RequestTrace;
+use Grav\Plugin\OpenTelemetry\SchedulerTrace;
+use Grav\Plugin\OpenTelemetry\Span;
 use Grav\Plugin\OpenTelemetry\Tracer;
 use Grav\Plugin\OpenTelemetry\TraceContext;
+use RocketTheme\Toolbox\Event\Event;
 
 require_once __DIR__ . '/autoload.php';
 
 /**
  * Traces each request through Grav's phases and sends the spans to an OpenTelemetry collector
  * (OTLP/HTTP JSON) once the response is out. The trace continues the request's traceparent header,
- * so Grav's spans nest under the web server's.
+ * so Grav's spans nest under the web server's. On the command line, a scheduler run that runs at
+ * least one job is traced too, with a span per job.
  */
 class OpenTelemetryPlugin extends Plugin
 {
-    public const VERSION = '0.1.0';
+    public const VERSION = '0.2.0';
 
     // Run first and last among each event's listeners, so a phase covers every plugin's handlers.
     private const FIRST = 1_000_000;
     private const LAST = -1_000_000;
 
     private ?RequestTrace $trace = null;
+    private ?SchedulerTrace $scheduler = null;
+    private ?int $cliStartNs = null;
     private bool $exported = false;
 
     public static function getSubscribedEvents(): array
@@ -39,6 +47,8 @@ class OpenTelemetryPlugin extends Plugin
             'onOutputGenerated' => ['onOutputGenerated', self::FIRST],
             'onOutputRendered' => ['onOutputRendered', self::LAST],
             'onShutdown' => [['onShutdownStart', self::FIRST], ['onShutdownEnd', self::LAST]],
+            // Last, so every job is registered (Grav's own and the other plugins').
+            'onSchedulerInitialized' => ['onSchedulerInitialized', self::LAST],
         ];
     }
 
@@ -47,6 +57,8 @@ class OpenTelemetryPlugin extends Plugin
         parent::__construct($name, $grav, $config);
 
         if (PHP_SAPI === 'cli') {
+            $this->cliStartNs = (new Clock())->now();
+
             return;
         }
         $context = TraceContext::fromHeader($_SERVER['HTTP_TRACEPARENT'] ?? null);
@@ -136,6 +148,50 @@ class OpenTelemetryPlugin extends Plugin
         $this->export();
     }
 
+    /**
+     * Command line only: wraps each job's before() and then() callbacks (keeping the ones already set)
+     * so that a job that runs gets a span. The trace is exported when the run ends.
+     */
+    public function onSchedulerInitialized(Event $event): void
+    {
+        if ($this->cliStartNs === null || $this->scheduler !== null || $this->exporter() === null) {
+            return;
+        }
+        $trace = new SchedulerTrace(new Tracer(TraceContext::fromHeader(null), new Clock()), $this->cliStartNs);
+        $this->scheduler = $trace;
+
+        /** @var Scheduler $scheduler */
+        $scheduler = $event['scheduler'];
+        foreach (array_merge(...$scheduler->getQueuedJobs(true)) as $job) {
+            // Job keeps its callbacks private; read them so ours run alongside, not instead.
+            [$before, $after] = \Closure::bind(fn () => [$this->before ?? null, $this->after ?? null], $job, Job::class)();
+            $job->before(function () use ($trace, $job, $before): void {
+                $trace->jobStarted((string) $job->getId());
+                if (is_callable($before)) {
+                    $before();
+                }
+            });
+            $job->then(function ($output, $code = null) use ($trace, $job, $after): void {
+                $trace->jobEnded((string) $job->getId(), (bool) $job->isSuccessful(), is_string($output) ? $output : '');
+                if (is_callable($after)) {
+                    $after($output, $code);
+                }
+            }, $job->runInBackground());
+        }
+
+        register_shutdown_function([$this, 'exportScheduler']);
+    }
+
+    /** @internal The scheduler run's last shutdown function. */
+    public function exportScheduler(): void
+    {
+        if ($this->scheduler === null || !$this->scheduler->hasJobs()) {
+            return;
+        }
+        $this->scheduler->tracer->end($this->scheduler->root);
+        $this->send($this->scheduler->tracer->context->traceId, $this->scheduler->spans());
+    }
+
     /** @internal Called at onShutdown, or as the request's last shutdown function. */
     public function export(): void
     {
@@ -152,18 +208,18 @@ class OpenTelemetryPlugin extends Plugin
             $this->trace->respond(http_response_code() ?: 200);
         }
 
+        $this->send($this->trace->tracer->context->traceId, $this->trace->spans());
+    }
+
+    /** @param list<Span> $spans */
+    private function send(string $traceId, array $spans): void
+    {
         $exporter = $this->exporter();
         if ($exporter === null) {
             return;
         }
         try {
-            $payload = OtlpJson::encode(
-                $this->trace->tracer->context->traceId,
-                $this->resource(),
-                'grav-plugin-opentelemetry',
-                self::VERSION,
-                $this->trace->spans(),
-            );
+            $payload = OtlpJson::encode($traceId, $this->resource(), 'grav-plugin-opentelemetry', self::VERSION, $spans);
         } catch (\JsonException $e) {
             $this->warn('could not encode the spans: ' . $e->getMessage());
 
