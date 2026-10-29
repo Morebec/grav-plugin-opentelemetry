@@ -1,0 +1,8 @@
+enabled: true
+# Empty: OTEL_SERVICE_NAME, then service.name in OTEL_RESOURCE_ATTRIBUTES, then "grav".
+service_name: ''
+# OTLP/HTTP traces URL. Empty: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, or OTEL_EXPORTER_OTLP_ENDPOINT + /v1/traces.
+# With none of them set, the plugin records nothing.
+endpoint: ''
+# Seconds to wait for the collector (the export runs after the response is sent).
+timeout: 1

@@ -1,0 +1,50 @@
+name: OpenTelemetry
+slug: opentelemetry
+type: plugin
+version: 0.1.0
+description: Traces each request through Grav's phases and sends the spans to an OpenTelemetry collector (OTLP/HTTP), continuing the web server's trace.
+icon: line-chart
+author:
+  name: Morébec
+  url: https://morebec.com
+homepage: https://github.com/Morebec/grav-plugin-opentelemetry
+bugs: https://github.com/Morebec/grav-plugin-opentelemetry/issues
+keywords: opentelemetry, otlp, tracing, traces, observability, performance
+license: MIT
+
+compatibility:
+  grav: ['2.0']
+
+dependencies:
+  - { name: grav, version: '>=2.0.0' }
+
+form:
+  validation: strict
+  fields:
+    enabled:
+      type: toggle
+      label: PLUGIN_ADMIN.PLUGIN_STATUS
+      highlight: 1
+      default: 1
+      options:
+        1: PLUGIN_ADMIN.ENABLED
+        0: PLUGIN_ADMIN.DISABLED
+      validate:
+        type: bool
+    service_name:
+      type: text
+      label: Service name
+      help: Empty uses OTEL_SERVICE_NAME, then "grav".
+    endpoint:
+      type: url
+      label: Traces endpoint (OTLP/HTTP)
+      placeholder: http://collector:4318/v1/traces
+      help: Empty uses OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, or OTEL_EXPORTER_OTLP_ENDPOINT + /v1/traces. With neither, nothing is recorded.
+    timeout:
+      type: number
+      label: Export timeout (seconds)
+      default: 1
+      validate:
+        type: number
+        min: 0.1
+        max: 10
