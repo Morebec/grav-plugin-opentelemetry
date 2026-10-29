@@ -59,8 +59,23 @@ endpoint: ''       # empty: the variables above
 timeout: 1         # seconds to wait for the collector
 ```
 
-A request whose `traceparent` says "not sampled" (flags `00`) is not recorded. Command-line runs
-(`bin/grav`, the scheduler) are not traced.
+A request whose `traceparent` says "not sampled" (flags `00`) is not recorded.
+
+## Scheduler runs
+
+On the command line, `bin/grav scheduler` is traced too: each run that runs at least one job sends
+a new trace (no parent) with a `grav scheduler` span, from the command's start to its end, and a
+child span per job that ran:
+
+```text
+my-site  grav scheduler            the whole run (status error if a job failed)
+├─ job cache-purge                 grav.scheduler.job = cache-purge
+└─ job my-plugin-job               status error, message = the job's output (500 characters at most)
+```
+
+The plugin wraps every registered job's `before()` and `then()` callbacks at `onSchedulerInitialized`
+(after every other listener), keeping the callbacks a job already had. A run where no job is due
+sends nothing. Other `bin/grav` commands are not traced.
 
 ## Development
 

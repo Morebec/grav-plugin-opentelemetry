@@ -6,6 +6,7 @@ use Grav\Plugin\OpenTelemetry\Clock;
 use Grav\Plugin\OpenTelemetry\Exporter;
 use Grav\Plugin\OpenTelemetry\OtlpJson;
 use Grav\Plugin\OpenTelemetry\RequestTrace;
+use Grav\Plugin\OpenTelemetry\SchedulerTrace;
 use Grav\Plugin\OpenTelemetry\Span;
 use Grav\Plugin\OpenTelemetry\TraceContext;
 use Grav\Plugin\OpenTelemetry\Tracer;
@@ -99,6 +100,30 @@ check('request trace: phases tile the root under the incoming parent', function 
     same(true, array_reduce($spans, fn ($ok, Span $s) => $ok && $s->isEnded() && $s->endNs >= $s->startNs, true), 'all ended');
     same(503, $spans[0]->attributes['http.response.status_code']);
     same(Span::STATUS_ERROR, $spans[0]->status);
+});
+
+check('scheduler trace: a span per job that ran, failures marked', function () {
+    $clock = new Clock();
+    $start = $clock->now();
+    $trace = new SchedulerTrace(new Tracer(TraceContext::fromHeader(null), $clock), $start);
+    same(false, $trace->hasJobs(), 'no job yet');
+    $trace->jobStarted('cache-purge');
+    $trace->jobEnded('cache-purge', true, 'done');
+    $trace->jobStarted('outbox');
+    $trace->jobEnded('outbox', false, "  webhook answered 503\n");
+    $trace->jobEnded('never-started', false, 'ignored');
+    same(true, $trace->hasJobs());
+    $spans = $trace->spans();
+
+    same(['grav scheduler', 'job cache-purge', 'job outbox'], array_map(fn (Span $s) => $s->name, $spans));
+    same(null, $spans[0]->parentSpanId, 'a new trace');
+    same($start, $spans[0]->startNs);
+    same($spans[0]->spanId, $spans[2]->parentSpanId);
+    same('outbox', $spans[2]->attributes['grav.scheduler.job']);
+    same(Span::STATUS_UNSET, $spans[1]->status);
+    same(Span::STATUS_ERROR, $spans[2]->status);
+    same('webhook answered 503', $spans[2]->statusMessage);
+    same(Span::STATUS_ERROR, $spans[0]->status, 'the run failed');
 });
 
 check('otlp json: encodes ids, kinds, times and typed attributes', function () {
