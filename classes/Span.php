@@ -17,7 +17,7 @@ final class Span
 
     /** @param array<string, string|int|float|bool> $attributes */
     public function __construct(
-        public readonly string $name,
+        public string $name,
         public readonly string $spanId,
         public readonly ?string $parentSpanId,
         public readonly int $startNs,

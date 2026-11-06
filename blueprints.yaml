@@ -1,7 +1,7 @@
 name: OpenTelemetry
 slug: opentelemetry
 type: plugin
-version: 0.2.0
+version: 0.3.0
 description: Traces each request through Grav's phases and sends the spans to an OpenTelemetry collector (OTLP/HTTP), continuing the web server's trace, and each scheduler run with a span per job.
 icon: line-chart
 author:
