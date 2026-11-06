@@ -3,8 +3,8 @@
 namespace Grav\Plugin\OpenTelemetry;
 
 /**
- * One request as a root span ("grav") with one child span per phase. Phases follow each other:
- * entering a phase ends the previous one, so the children tile the root without gaps.
+ * One request as a server span ("<method> <route>") with one child span per phase. Phases follow each
+ * other: entering a phase ends the previous one, so the children tile the root without gaps.
  */
 final class RequestTrace
 {
@@ -18,7 +18,8 @@ final class RequestTrace
         array $attributes = [],
         string $firstPhase = 'bootstrap',
     ) {
-        $this->root = $tracer->start('grav', null, $startNs, Span::KIND_INTERNAL, $attributes);
+        $method = (string) ($attributes['http.request.method'] ?? 'GET');
+        $this->root = $tracer->start($method, null, $startNs, Span::KIND_SERVER, $attributes);
         $this->phase = $tracer->start($firstPhase, $this->root, $startNs);
     }
 
@@ -39,6 +40,16 @@ final class RequestTrace
         }
     }
 
+    /**
+     * The page that answers: its route becomes http.route and names the span "<method> <route>"
+     * (OpenTelemetry's HTTP convention: one name per page, never per URL).
+     */
+    public function route(string $route): void
+    {
+        $this->root->attributes['http.route'] = $route;
+        $this->root->name = $this->method() . ' ' . $route;
+    }
+
     public function currentPhase(): ?string
     {
         return $this->phase?->name;
@@ -49,6 +60,11 @@ final class RequestTrace
     {
         $this->leave();
         $this->root->attributes['http.response.status_code'] = $status;
+        if ($status === 404) {
+            // Grav answered with its error page: no route, or every probed URL would share the error page's.
+            unset($this->root->attributes['http.route']);
+            $this->root->name = $this->method();
+        }
         if ($status >= 500) {
             $this->root->status = Span::STATUS_ERROR;
         }
@@ -59,6 +75,11 @@ final class RequestTrace
     {
         $this->root->status = Span::STATUS_ERROR;
         $this->root->statusMessage = $message;
+    }
+
+    private function method(): string
+    {
+        return (string) ($this->root->attributes['http.request.method'] ?? 'GET');
     }
 
     /** @return list<Span> */

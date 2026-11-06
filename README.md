@@ -1,26 +1,34 @@
 # Grav OpenTelemetry plugin
 
 Traces every Grav request and sends the spans to an OpenTelemetry collector over OTLP/HTTP.
-The trace continues the request's W3C `traceparent` header, so in a setup like
-`proxy → Caddy/FrankenPHP (tracing) → Grav` one trace shows the whole request:
+The request is the trace's server span, named `<method> <route>` by the page that answered
+(OpenTelemetry's HTTP convention), so a backend's per-operation views list one entry per page:
 
 ```text
-host-platform  GET /contact            the reverse proxy's Caddy
-└─ my-site     GET /contact            FrankenPHP's Caddy (`tracing` directive)
-   └─ grav                             this plugin: the PHP request
-      ├─ bootstrap                     request start → plugins loaded (config, autoload, Grav services)
-      ├─ plugins                       every plugin's onPluginsInitialized
-      ├─ themes                        theme loaded (until onThemeInitialized)
-      ├─ pages                         request, tasks, assets, Twig set up, page tree built (until onPagesInitialized)
-      ├─ page                          current page resolved (until onPageInitialized)
-      ├─ render                        content and Twig rendering (until onOutputGenerated)
-      ├─ output                        output filters and sending the response (until onOutputRendered)
-      └─ shutdown                      onShutdown work, after the response is sent
+my-site  GET /contact                  this plugin: the PHP request (server span)
+├─ bootstrap                           request start → plugins loaded (config, autoload, Grav services)
+├─ plugins                             every plugin's onPluginsInitialized
+├─ themes                              theme loaded (until onThemeInitialized)
+├─ pages                               request, tasks, assets, Twig set up, page tree built (until onPagesInitialized)
+├─ page                                current page resolved (until onPageInitialized)
+├─ render                              content and Twig rendering (until onOutputGenerated)
+├─ output                              output filters and sending the response (until onOutputRendered)
+└─ shutdown                            onShutdown work, after the response is sent
 ```
 
 Phases follow each other with no gaps; a request that stops early (a redirect, a fatal error) ends
-its open phase there. The `grav` span carries `http.request.method`, `url.path`, `http.route`,
+its open phase there. The server span carries `http.request.method`, `url.path`, `http.route` (the page's route),
 `grav.page.template` and `http.response.status_code` (status error from 500 up, or on a fatal error).
+
+**Names stay bounded.** The span is named by the page's route, never the URL: query strings and URLs
+no page answers don't add names. A request that ends before a page is resolved (a redirect) is named
+`<method>` alone, and so is a 404 (Grav's error page answers every unknown URL, bots' probes included).
+Backends that turn span names into metrics (Grafana Cloud's Application Observability) stay within a
+series per page.
+
+The trace continues the request's W3C `traceparent` header when one comes in (a proxy or a client that
+traces), and starts a new trace otherwise. Don't also turn on Caddy's or FrankenPHP's `tracing` in
+front of Grav: it would add a second server span per request, named by URL.
 
 **No dependencies.** No Composer packages, no curl: the plugin parses `traceparent`, keeps the
 spans in memory and posts them once per request as OTLP/JSON with PHP's HTTP stream wrapper, after

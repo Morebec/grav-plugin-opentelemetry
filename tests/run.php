@@ -82,7 +82,7 @@ check('request trace: phases tile the root under the incoming parent', function 
     $context = TraceContext::fromHeader('00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01');
     $clock = new Clock();
     $start = $clock->now();
-    $trace = new RequestTrace(new Tracer($context, $clock), $start, ['url.path' => '/']);
+    $trace = new RequestTrace(new Tracer($context, $clock), $start, ['http.request.method' => 'GET', 'url.path' => '/']);
     $trace->enter('plugins');
     $trace->enter('render');
     $trace->leave();
@@ -90,7 +90,8 @@ check('request trace: phases tile the root under the incoming parent', function 
     $trace->enter('shutdown');
     $spans = $trace->spans();
 
-    same(['grav', 'bootstrap', 'plugins', 'render', 'shutdown'], array_map(fn (Span $s) => $s->name, $spans));
+    same(['GET', 'bootstrap', 'plugins', 'render', 'shutdown'], array_map(fn (Span $s) => $s->name, $spans));
+    same(Span::KIND_SERVER, $spans[0]->kind, 'root is the server span');
     same('00f067aa0ba902b7', $spans[0]->parentSpanId, 'root parent');
     foreach (array_slice($spans, 1) as $span) {
         same($spans[0]->spanId, $span->parentSpanId, "{$span->name} parent");
@@ -100,6 +101,21 @@ check('request trace: phases tile the root under the incoming parent', function 
     same(true, array_reduce($spans, fn ($ok, Span $s) => $ok && $s->isEnded() && $s->endNs >= $s->startNs, true), 'all ended');
     same(503, $spans[0]->attributes['http.response.status_code']);
     same(Span::STATUS_ERROR, $spans[0]->status);
+});
+
+check('request trace: named by the page route, not the URL; a 404 has no route', function () {
+    $trace = new RequestTrace(new Tracer(TraceContext::fromHeader(null), new Clock()), 0, ['http.request.method' => 'POST', 'url.path' => '/contact?x=1']);
+    $trace->route('/contact');
+    same('POST /contact', $trace->root->name);
+    same('/contact', $trace->root->attributes['http.route']);
+    $trace->respond(200);
+    same('POST /contact', $trace->root->name, 'kept on success');
+
+    $missing = new RequestTrace(new Tracer(TraceContext::fromHeader(null), new Clock()), 0, ['http.request.method' => 'GET', 'url.path' => '/wp-login.php']);
+    $missing->route('/error');
+    $missing->respond(404);
+    same('GET', $missing->root->name);
+    same(false, isset($missing->root->attributes['http.route']), 'no route on a 404');
 });
 
 check('scheduler trace: a span per job that ran, failures marked', function () {

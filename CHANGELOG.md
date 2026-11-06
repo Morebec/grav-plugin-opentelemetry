@@ -1,3 +1,9 @@
+# v0.3.0
+## 2026-11-06
+
+1. [](#improved)
+    * The request span is now the server span, named `<method> <route>` by the page that answered (`GET /contact`), or `<method>` alone for a 404 or a request that ends before a page resolves. It was `grav`, an internal span under the web server's. Turn off Caddy's or FrankenPHP's `tracing` in front of Grav when upgrading, or each request gets two server spans.
+
 # v0.2.0
 ## 2026-10-29
 

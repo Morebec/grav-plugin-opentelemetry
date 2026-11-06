@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Grav 2 plugin (slug `opentelemetry`): a span per Grav phase under a `grav` span that continues the
-request's `traceparent`, posted as OTLP/HTTP JSON after the response. README.md is the reference.
+Grav 2 plugin (slug `opentelemetry`): a span per Grav phase under the request's server span (`<method> <route>`,
+never the URL) that continues the request's `traceparent`, posted as OTLP/HTTP JSON after the response. README.md is the reference.
 
 - No dependencies: no Composer packages, no curl (Grav's own vendor/ would clash). Classes in
   `classes/` (`Grav\Plugin\OpenTelemetry\`), loaded by `autoload.php`.

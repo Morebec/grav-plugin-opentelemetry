@@ -26,7 +26,7 @@ require_once __DIR__ . '/autoload.php';
  */
 class OpenTelemetryPlugin extends Plugin
 {
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.3.0';
 
     // Run first and last among each event's listeners, so a phase covers every plugin's handlers.
     private const FIRST = 1_000_000;
@@ -116,7 +116,7 @@ class OpenTelemetryPlugin extends Plugin
         $page = $this->grav['page'] ?? null;
         if ($page) {
             if ($page->route()) {
-                $this->trace->root->attributes['http.route'] = $page->route();
+                $this->trace->route($page->route());
             }
             $this->trace->root->attributes['grav.page.template'] = $page->template();
         }
